@@ -31,7 +31,7 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({ channels }) => {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
-  const [channelId, setChannelId] = useState<number>(channels[0]?.id ?? 0);
+  const [selectedChannelIds, setSelectedChannelIds] = useState<number[]>([]);
   const [label, setLabel] = useState('');
   const [days, setDays] = useState<number[]>([1, 2, 3, 4, 5, 6]);
   const [startTime, setStartTime] = useState('08:00');
@@ -59,7 +59,7 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({ channels }) => {
 
   const openCreate = () => {
     setEditId(null);
-    setChannelId(channels[0]?.id ?? 0);
+    setSelectedChannelIds(channels.length > 0 ? [channels[0].id] : []);
     setLabel('');
     setDays([1, 2, 3, 4, 5, 6]);
     setStartTime('08:00');
@@ -72,7 +72,7 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({ channels }) => {
 
   const openEdit = (s: ScheduleDto) => {
     setEditId(s.id);
-    setChannelId(s.channel_id);
+    setSelectedChannelIds([s.channel_id]);
     setLabel(s.label);
     setDays(s.days_of_week);
     setStartTime(s.start_time);
@@ -81,6 +81,20 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({ channels }) => {
     setActive(s.active);
     setFormError(null);
     setModalOpen(true);
+  };
+
+  const toggleChannel = (id: number) => {
+    setSelectedChannelIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const selectAllChannels = () => {
+    setSelectedChannelIds(channels.map((c) => c.id));
+  };
+
+  const clearChannels = () => {
+    setSelectedChannelIds([]);
   };
 
   const toggleDay = (dayId: number) => {
@@ -100,6 +114,11 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({ channels }) => {
     e.preventDefault();
     setFormError(null);
 
+    if (selectedChannelIds.length === 0) {
+      setFormError('Selecione ao menos um canal para o agendamento.');
+      return;
+    }
+
     const winSec = computeWindowSeconds(startTime, endTime);
     if (winSec <= 0) {
       setFormError('O horário final deve ser maior que o horário inicial.');
@@ -115,7 +134,7 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({ channels }) => {
     setSaving(true);
     try {
       const payload = {
-        channel_id: channelId,
+        channel_ids: selectedChannelIds,
         label,
         days_of_week: days,
         start_time: startTime,
@@ -292,7 +311,7 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({ channels }) => {
 
       {modalOpen && (
         <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-[#131B2E] border border-slate-800 rounded-xl overflow-hidden">
+          <div className="w-full max-w-lg bg-[#131B2E] border border-slate-800 rounded-xl overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
               <h3 className="text-base font-semibold text-slate-100">
                 {editId === null ? 'Novo Agendamento' : 'Editar Agendamento'}
@@ -305,7 +324,7 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({ channels }) => {
               </button>
             </div>
 
-            <form onSubmit={handleSave} className="p-6 space-y-4">
+            <form onSubmit={handleSave} className="p-6 space-y-4 max-h-[82vh] overflow-y-auto">
               {formError && (
                 <div className="p-3 rounded-lg bg-red-950/50 border border-red-800/70 text-xs text-red-200">
                   {formError}
@@ -313,18 +332,58 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({ channels }) => {
               )}
 
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1.5">Canal</label>
-                <select
-                  value={channelId}
-                  onChange={(e) => setChannelId(Number(e.target.value))}
-                  className="w-full bg-[#090D16] border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-blue-500"
-                >
-                  {channels.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      #{c.id} — {c.name}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-medium text-slate-300">
+                    Canais ({selectedChannelIds.length}/{channels.length} selecionado{selectedChannelIds.length === 1 ? '' : 's'})
+                  </label>
+                  <div className="flex items-center gap-3 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={selectAllChannels}
+                      className="text-blue-400 hover:text-blue-300 cursor-pointer"
+                    >
+                      Selecionar todos
+                    </button>
+                    <button
+                      type="button"
+                      onClick={clearChannels}
+                      className="text-slate-400 hover:text-slate-200 cursor-pointer"
+                    >
+                      Limpar
+                    </button>
+                  </div>
+                </div>
+
+                <div className="max-h-40 overflow-y-auto bg-[#090D16] border border-slate-700 rounded-lg p-2 space-y-1">
+                  {channels.map((c) => {
+                    const checked = selectedChannelIds.includes(c.id);
+                    return (
+                      <label
+                        key={c.id}
+                        className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md text-xs cursor-pointer transition-colors ${
+                          checked ? 'bg-blue-600/15 text-slate-100' : 'text-slate-300 hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <span className="flex items-center gap-2.5 min-w-0">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleChannel(c.id)}
+                            className="rounded border-slate-600 bg-[#131B2E] text-blue-600 shrink-0"
+                          />
+                          <span className="font-mono text-slate-400 shrink-0">#{c.id}</span>
+                          <span className="truncate font-medium">{c.name}</span>
+                        </span>
+                        {!c.active && <span className="text-[11px] text-slate-500 shrink-0">Inativo</span>}
+                      </label>
+                    );
+                  })}
+                </div>
+                {editId !== null && selectedChannelIds.length > 1 && (
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Atualiza esta regra e replica o mesmo horário para os demais canais marcados.
+                  </p>
+                )}
               </div>
 
               <div>
@@ -428,7 +487,11 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({ channels }) => {
                   disabled={saving}
                   className="px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg cursor-pointer"
                 >
-                  {saving ? 'Salvando...' : 'Salvar Regra'}
+                  {saving
+                    ? 'Salvando...'
+                    : selectedChannelIds.length > 1
+                    ? `Salvar (${selectedChannelIds.length} canais)`
+                    : 'Salvar Regra'}
                 </button>
               </div>
             </form>

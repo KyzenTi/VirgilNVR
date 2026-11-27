@@ -111,18 +111,24 @@ export const api = {
   // Schedules
   getSchedules: () => request<{ schedules: ScheduleDto[] }>('/api/schedules'),
   createSchedule: (payload: {
-    channel_id: number;
+    channel_id?: number;
+    channel_ids?: number[];
     label: string;
     days_of_week: number[];
     start_time: string;
     end_time: string;
     duration_sec: number;
     active: boolean;
-  }) => request<{ schedule: ScheduleDto }>('/api/schedules', { method: 'POST', body: JSON.stringify(payload) }),
+  }) =>
+    request<{ schedule: ScheduleDto; schedules?: ScheduleDto[] }>('/api/schedules', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   updateSchedule: (
     id: number,
     payload: Partial<{
       channel_id: number;
+      channel_ids: number[];
       label: string;
       days_of_week: number[];
       start_time: string;

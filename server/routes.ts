@@ -687,6 +687,7 @@ export function createApiRouter(): express.Router {
   router.post('/schedules', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
     const body = req.body as {
       channel_id?: number;
+      channel_ids?: number[];
       label?: string;
       days_of_week?: number[];
       start_time?: string;
@@ -695,40 +696,80 @@ export function createApiRouter(): express.Router {
       active?: boolean;
     };
 
-    const validation = validateSchedulePayload(body, null);
-    if ('error' in validation) {
-      res.status(validation.status).json({ error: validation.error });
+    const rawIds = Array.isArray(body.channel_ids) && body.channel_ids.length > 0
+      ? body.channel_ids
+      : body.channel_id !== undefined
+      ? [body.channel_id]
+      : [];
+
+    const targetChannelIds = Array.from(
+      new Set(rawIds.map((v) => Number(v)).filter((v) => Number.isInteger(v) && v > 0))
+    );
+
+    if (targetChannelIds.length === 0) {
+      res.status(400).json({ error: 'Selecione ao menos um canal para o agendamento.' });
       return;
     }
 
-    const info = db
-      .prepare(
-        `INSERT INTO schedules (channel_id, label, days_of_week, start_time, end_time, duration_sec, active)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        validation.channelId,
-        validation.label,
-        JSON.stringify(validation.daysOfWeek),
-        validation.startTime,
-        validation.endTime,
-        validation.durationSec,
-        validation.active ? 1 : 0
-      );
+    const validatedList: Array<{
+      channelId: number;
+      label: string;
+      daysOfWeek: number[];
+      startTime: string;
+      endTime: string;
+      durationSec: number;
+      active: boolean;
+    }> = [];
 
-    const created = db.prepare('SELECT * FROM schedules WHERE id = ?').get(info.lastInsertRowid) as ScheduleRow;
-    addLog(
-      'info',
-      'scheduler',
-      validation.channelId,
-      `Agendamento "${validation.label || validation.startTime}" criado (${validation.startTime}–${validation.endTime}, ${validation.durationSec}s).`
+    for (const chId of targetChannelIds) {
+      const validation = validateSchedulePayload({ ...body, channel_id: chId }, null);
+      if ('error' in validation) {
+        const ch = db.prepare('SELECT name FROM channels WHERE id = ?').get(chId) as { name: string } | undefined;
+        const prefix = ch ? `Canal "${ch.name}" (#${chId}): ` : '';
+        res.status(validation.status).json({ error: `${prefix}${validation.error}` });
+        return;
+      }
+      validatedList.push(validation);
+    }
+
+    const insertStmt = db.prepare(
+      `INSERT INTO schedules (channel_id, label, days_of_week, start_time, end_time, duration_sec, active)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
     );
+
+    const createdRows = db.transaction(() => {
+      const inserted: ScheduleRow[] = [];
+      for (const v of validatedList) {
+        const info = insertStmt.run(
+          v.channelId,
+          v.label,
+          JSON.stringify(v.daysOfWeek),
+          v.startTime,
+          v.endTime,
+          v.durationSec,
+          v.active ? 1 : 0
+        );
+        const row = db.prepare('SELECT * FROM schedules WHERE id = ?').get(info.lastInsertRowid) as ScheduleRow;
+        inserted.push(row);
+        addLog(
+          'info',
+          'scheduler',
+          v.channelId,
+          `Agendamento "${v.label || v.startTime}" criado (${v.startTime}–${v.endTime}, ${v.durationSec}s).`
+        );
+      }
+      return inserted;
+    })();
+
+    const formatted = createdRows.map((row) => ({
+      ...row,
+      days_of_week: JSON.parse(row.days_of_week) as number[],
+      active: row.active === 1,
+    }));
+
     res.status(201).json({
-      schedule: {
-        ...created,
-        days_of_week: JSON.parse(created.days_of_week) as number[],
-        active: created.active === 1,
-      },
+      schedule: formatted[0],
+      schedules: formatted,
     });
   });
 
@@ -742,6 +783,7 @@ export function createApiRouter(): express.Router {
 
     const body = req.body as {
       channel_id?: number;
+      channel_ids?: number[];
       label?: string;
       days_of_week?: number[];
       start_time?: string;
@@ -750,8 +792,26 @@ export function createApiRouter(): express.Router {
       active?: boolean;
     };
 
-    const merged = {
-      channel_id: body.channel_id ?? existing.channel_id,
+    const rawIds = Array.isArray(body.channel_ids) && body.channel_ids.length > 0
+      ? body.channel_ids
+      : [body.channel_id ?? existing.channel_id];
+
+    const targetChannelIds = Array.from(
+      new Set(rawIds.map((v) => Number(v)).filter((v) => Number.isInteger(v) && v > 0))
+    );
+
+    if (targetChannelIds.length === 0) {
+      res.status(400).json({ error: 'Selecione ao menos um canal para o agendamento.' });
+      return;
+    }
+
+    // Keep existing.channel_id as the primary updated row if still checked, else move to first selected
+    const primaryChannelId = targetChannelIds.includes(existing.channel_id)
+      ? existing.channel_id
+      : targetChannelIds[0];
+    const extraChannelIds = targetChannelIds.filter((id) => id !== primaryChannelId);
+
+    const baseMerged = {
       label: body.label ?? existing.label,
       days_of_week: body.days_of_week ?? (JSON.parse(existing.days_of_week) as number[]),
       start_time: body.start_time ?? existing.start_time,
@@ -760,28 +820,65 @@ export function createApiRouter(): express.Router {
       active: body.active ?? existing.active === 1,
     };
 
-    const validation = validateSchedulePayload(merged, scheduleId);
-    if ('error' in validation) {
-      res.status(validation.status).json({ error: validation.error });
+    const primaryValidation = validateSchedulePayload({ ...baseMerged, channel_id: primaryChannelId }, scheduleId);
+    if ('error' in primaryValidation) {
+      res.status(primaryValidation.status).json({ error: primaryValidation.error });
       return;
     }
 
-    db.prepare(
-      `UPDATE schedules SET
-        channel_id = ?, label = ?, days_of_week = ?, start_time = ?, end_time = ?, duration_sec = ?, active = ?
-       WHERE id = ?`
-    ).run(
-      validation.channelId,
-      validation.label,
-      JSON.stringify(validation.daysOfWeek),
-      validation.startTime,
-      validation.endTime,
-      validation.durationSec,
-      validation.active ? 1 : 0,
-      scheduleId
-    );
+    const extraValidations: Array<typeof primaryValidation> = [];
+    for (const chId of extraChannelIds) {
+      const val = validateSchedulePayload({ ...baseMerged, channel_id: chId }, null);
+      if ('error' in val) {
+        const ch = db.prepare('SELECT name FROM channels WHERE id = ?').get(chId) as { name: string } | undefined;
+        const prefix = ch ? `Canal "${ch.name}" (#${chId}): ` : '';
+        res.status(val.status).json({ error: `${prefix}${val.error}` });
+        return;
+      }
+      extraValidations.push(val);
+    }
 
-    const updated = db.prepare('SELECT * FROM schedules WHERE id = ?').get(scheduleId) as ScheduleRow;
+    const updated = db.transaction(() => {
+      db.prepare(
+        `UPDATE schedules SET
+          channel_id = ?, label = ?, days_of_week = ?, start_time = ?, end_time = ?, duration_sec = ?, active = ?
+         WHERE id = ?`
+      ).run(
+        primaryValidation.channelId,
+        primaryValidation.label,
+        JSON.stringify(primaryValidation.daysOfWeek),
+        primaryValidation.startTime,
+        primaryValidation.endTime,
+        primaryValidation.durationSec,
+        primaryValidation.active ? 1 : 0,
+        scheduleId
+      );
+
+      const insertStmt = db.prepare(
+        `INSERT INTO schedules (channel_id, label, days_of_week, start_time, end_time, duration_sec, active)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      );
+      for (const extra of extraValidations) {
+        insertStmt.run(
+          extra.channelId,
+          extra.label,
+          JSON.stringify(extra.daysOfWeek),
+          extra.startTime,
+          extra.endTime,
+          extra.durationSec,
+          extra.active ? 1 : 0
+        );
+        addLog(
+          'info',
+          'scheduler',
+          extra.channelId,
+          `Agendamento "${extra.label || extra.startTime}" replicado (${extra.startTime}–${extra.endTime}, ${extra.durationSec}s).`
+        );
+      }
+
+      return db.prepare('SELECT * FROM schedules WHERE id = ?').get(scheduleId) as ScheduleRow;
+    })();
+
     res.json({
       schedule: {
         ...updated,
