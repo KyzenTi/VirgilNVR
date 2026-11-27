@@ -1,0 +1,25 @@
+[Unit]
+Description=VigilLocal NVR - Gravador Local RTSP e Replay Temporal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vigilnvr
+Group=vigilnvr
+WorkingDirectory=/opt/vigilnvr
+Environment=NODE_ENV=production
+EnvironmentFile=/opt/vigilnvr/.env
+ExecStart=/usr/bin/node /opt/vigilnvr/server.ts
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=15
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vigilnvr
+ReadWritePaths=/var/lib/vigilnvr /var/lib/vigilnvr/recordings
+
+[Install]
+WantedBy=multi-user.target

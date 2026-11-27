@@ -1,0 +1,6 @@
+{
+  "name": "VigilLocal NVR",
+  "description": "Sistema local de NVR on-premises com captura RTSP via FFmpeg (-c:v copy), agendamento customizado, retenção automática de disco e replay temporal contínuo.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
